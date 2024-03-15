@@ -1,0 +1,38 @@
+Discuss as a group / decide on the following: 
+
+1. Discuss and gain a collective understanding of the sequence labelling (or token classification) 
+task. Ensure you understand the BIO schema of labelling and can understand the segments 
+and tags in PLOD-CW dataset provided at the link above. 
+ 
+2. Look at number of instances in each dataset split, viz., train, validation, and test.  
+ 
+3. Discuss if you will use any additional number of training instances as a group and extract 
+those instances from the optional dataset (PLOD-Filtered). 
+ 
+4. Plan the experiments, while keeping in mind your resources and time constrains, and explain 
+the scope and priorities. 
+ 
+5. Decide on a common development environment (code repository, python libraries needed, 
+etc.) and list the choices made. 
+ 
+6. Divide individual tasks and explain how you are planning to work together. Each group 
+member could potentially focus on a different experiment setup (i.e., this is part of the 
+individual assessment). This might be experimenting with different: 
+a. data set preparations (pre-processing and/or featurisation) 
+b. algorithms 
+c. pre-trained models (transfer learning) 
+d. setup of the hyperparameters 
+e. any other such relevant experimental variations (if needed)
+
+
+------------------------
+
+1. Done
+2. train: 1072, validation: 126, test: 153
+3. Part of the task of Paulinho & Kirish!
+4. We already divided the tasks
+5. Github repository (https://github.com/antoineedy/nlp-coursework-2024)
+    Packages for data-viz: pandas, seaborn, matplotlib, plotly
+    Packages for pre-processing and models: pytorch, nltk, modules from huggingface
+    Packages to viz the experiments: Wandb? MLOps? Tensorboard?
+6. Done together
