@@ -10,8 +10,10 @@ class Vizualization:
     def plot(self, words, output):
         # change the color of the token depending on the output
         output = output.squeeze().tolist()
-        col = {0: "black", 1: "green", 2: "red", 3: "blue", 4: "purple"}
+        col = {0: Back.BLACK, 1: Back.GREEN, 2: Back.RED, 3: Back.BLUE, 4: Back.MAGENTA}
         colors = [col[i] for i in output]
-        words = [Back.RED + word for word in words]
+        words = [word.replace("Ġ", "") for word in words]
+        colors = colors[1:-1]
+        words = words[1:-1]
         for i, word in enumerate(words):
-            print(Style.RESET_ALL + word, end=" ")
+            print(colors[i] + word, end=" ")
