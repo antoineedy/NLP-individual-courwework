@@ -38,13 +38,13 @@ class RNNModel(nn.Module):
 
 class Models:
     """
-    rnn, pre-trained
+    rnn, pretrained
     """
 
     def __init__(self, method):
         self.method = method
         self.model = None
-        if self.method == "pretrained-bert":
+        if self.method == "pretrained":
             self.model = AutoModelForTokenClassification.from_pretrained(
                 "surrey-nlp/roberta-base-finetuned-abbr"
             )
@@ -58,7 +58,7 @@ class Models:
             raise ValueError("Invalid method")
 
     def fit(self, train_loader=None, test_loader=None, num_epochs=5, input_dim=100):
-        if self.method == "pretrained-bert":
+        if self.method == "pretrained":
             pass
         elif self.method == "rnn":
             error = nn.CrossEntropyLoss()
