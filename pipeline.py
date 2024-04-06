@@ -5,7 +5,7 @@ import torch
 from colorama import Back, Style
 
 
-class Pipeline:
+class PipelinePretrained:
     def __init__(self, model, tokenizer, dataset):
         self.model = model
         self.tokenizer = tokenizer
