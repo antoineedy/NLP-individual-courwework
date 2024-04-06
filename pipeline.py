@@ -35,7 +35,7 @@ class Pipeline:
             "I-LF": 4,
         }
         ID2TEXT = {v: k for k, v in TEXT2ID.items()}
-        cm = confusion_matrix(self.all_y, self.all_outs, normalize="pred")
+        cm = confusion_matrix(self.all_y, self.all_outs, normalize="true")
         # plot
         plt.figure(figsize=(5, 5))
         sns.heatmap(
