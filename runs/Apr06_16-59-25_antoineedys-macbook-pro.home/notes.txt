@@ -1,3 +1,0 @@
-no tokenization
-pretrained embeddings
-biltsm
