@@ -19,6 +19,15 @@ from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
 
+from transformers import AutoModelForTokenClassification
+import transformers
+
+from colorama import Back, Style
+
+from warnings import filterwarnings
+
+filterwarnings("ignore")
+
 TEXT2ID = {
     "B-O": 0,
     "B-AC": 1,
@@ -100,7 +109,7 @@ def init_data(train_dataset, val_dataset, test_dataset, batch_size=16):
 
 def load_embeddings(emb, text_field):
 
-    def load_embeddings(path):
+    def load_embeddings1(path):
         """Load the FastText embeddings from the embedding file."""
         print("Loading pre-trained embeddings")
 
@@ -131,19 +140,17 @@ def load_embeddings(emb, text_field):
 
         EMBEDDING_PATH = "/Users/antoineedy/Documents/MScAI/Semester2/NLP/Coursework/code/data/cc.en.300.vec"
 
-        embeddings = load_embeddings(EMBEDDING_PATH)
+        embeddings = load_embeddings1(EMBEDDING_PATH)
         embedding_matrix = initialize_embeddings(embeddings, text_field.vocab)
         embedding_matrix = torch.from_numpy(embedding_matrix)
-        print(embedding_matrix.shape)
 
     elif emb == "glove":
 
         EMBEDDING_PATH = "data/glove.6B.300d.txt"
 
-        embeddings = load_embeddings(EMBEDDING_PATH)
+        embeddings = load_embeddings1(EMBEDDING_PATH)
         embedding_matrix = initialize_embeddings(embeddings, text_field.vocab)
         embedding_matrix = torch.from_numpy(embedding_matrix)
-        print(embedding_matrix.shape)
 
     elif emb == "word2vec":
 
@@ -158,7 +165,6 @@ def load_embeddings(emb, text_field):
                 em.append(np.zeros(300))
         em = np.array(em)
         embedding_matrix = torch.tensor(em, dtype=torch.float32)
-        print(embedding_matrix.shape)
 
     return embedding_matrix
 
@@ -450,7 +456,7 @@ def results(output_path, label_field, test_iter, BATCH_SIZE):
 
     cm = confusion_matrix(c, p, normalize="true", labels=labels)
 
-    plt.rcParams["font.family"] = "serif"
+    plt.figure(figsize=(4, 4))
 
     sns.heatmap(
         cm,
@@ -460,6 +466,306 @@ def results(output_path, label_field, test_iter, BATCH_SIZE):
         yticklabels=nlabels,
         fmt=".2f",
     )
+    plt.title("Confusion Matrix")
     plt.ylabel("Actual")
     plt.xlabel("Predicted")
     plt.show()
+
+
+### VISUALIZATION OF THE OUTPUTS HERE
+
+import transformers
+
+
+def show_visu(datasets, model_path):
+
+    TEXT2ID = {
+        "B-O": 0,
+        "B-AC": 1,
+        "B-LF": 2,
+        "I-LF": 3,
+    }
+    datasets = datasets.map(
+        lambda x: {"ner_tags": [TEXT2ID[tag] for tag in x["ner_tags"]]}
+    )
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+    def tokenize_and_align_labels(examples):
+        tokenized_inputs = tokenizer(
+            examples["tokens"], truncation=True, is_split_into_words=True
+        )
+
+        labels = []
+        for i, label in enumerate(examples["ner_tags"]):
+            word_ids = tokenized_inputs.word_ids(batch_index=i)
+            previous_word_idx = None
+            label_ids = []
+            for word_idx in word_ids:
+                # Special tokens have a word id that is None. We set the label to -100 so they are automatically
+                # ignored in the loss function.
+                if word_idx is None:
+                    label_ids.append(-100)
+                # We set the label for the first token of each word.
+                elif word_idx != previous_word_idx:
+                    label_ids.append(label[word_idx])
+                # For the other tokens in a word, we set the label to either the current label or -100, depending on
+                # the label_all_tokens flag.
+                else:
+                    label_ids.append(label[word_idx] if True else -100)
+                previous_word_idx = word_idx
+
+            labels.append(label_ids)
+
+        tokenized_inputs["labels"] = labels
+        return tokenized_inputs
+
+    tokenized_datasets = datasets.map(tokenize_and_align_labels, batched=True)
+    model = AutoModelForTokenClassification.from_pretrained(model_path, num_labels=4)
+
+    pipeline = transformers.pipeline(
+        "ner", model=model, tokenizer=tokenizer, ignore_labels=[]
+    )
+
+    def choose(i=None):
+        if i is None:
+            i = torch.randint(0, len(datasets["test"]["tokens"]), (1,)).item()
+        output = pipeline(" ".join(datasets["test"]["tokens"][i]))
+        words = datasets["test"]["tokens"][i]
+        truth = datasets["test"]["ner_tags"][i]
+
+        return words, output, truth
+
+    def choose_multiple(nb=5):
+        indices = torch.randint(0, len(datasets["test"]["tokens"]), (nb,))
+        words = []
+        outputs = []
+        truths = []
+        for i in indices:
+            w, o, t = choose(i)
+            words.append(w)
+            outputs.append(o)
+            truths.append(t)
+        return words, outputs, truths
+
+    TEXT2ID = {
+        "O": 0,
+        "B-AC": 1,
+        "B-LF": 2,
+        "I-LF": 3,
+    }
+
+    def vizu(words, output, truth, type=None):
+        sentence = " ".join(words)
+        out_words = []
+        out_label = []
+        out_truth = []
+        index = 1
+        for i in range(len(output)):
+            start = output[i]["start"]
+            end = output[i]["end"]
+            word = output[i]["word"]
+            if type == 1 and "Ġ" in word:
+                out_words.append(" ")
+                out_label.append(0)
+                index += 1
+            elif type != 1 and word[0] != "#":
+                out_words.append(" ")
+                out_label.append(0)
+                index += 1
+            out_words.append(sentence[start:end])
+            if type == 1:
+                # print(output[i]['entity'])
+                out_label.append(TEXT2ID[output[i]["entity"]])
+            else:
+                out_label.append(int(output[i]["entity"][-1]))
+        col = {0: Back.BLACK, 1: Back.RED, 2: Back.GREEN, 3: Back.BLUE, 4: Back.MAGENTA}
+        out_label = out_label[1:]
+        out_words = out_words[1:]
+        print("Output:  ", end="")
+        for i in range(len(out_words)):
+            print(col[out_label[i]], end="")
+            print(out_words[i], end="")
+            print(Style.RESET_ALL, end="")
+        print()
+        print("Truth:   ", end="")
+        for i in range(len(words)):
+            print(col[truth[i]], end="")
+            print(words[i] + " ", end="")
+            print(Style.RESET_ALL, end="")
+        print()
+        print()
+
+    words, outputs, truths = choose_multiple()
+    for i in range(len(words)):
+        vizu(words[i], outputs[i], truths[i], type=0)
+
+
+### PLOTS
+
+import tensorboard as tb
+import os
+from copy import deepcopy
+
+
+def convert_tb_data(root_dir, sort_by=None):
+    import os
+    import pandas as pd
+    from tensorflow.python.summary.summary_iterator import summary_iterator
+
+    def convert_tfevent(filepath):
+        return pd.DataFrame(
+            [
+                parse_tfevent(e)
+                for e in summary_iterator(filepath)
+                if len(e.summary.value)
+            ]
+        )
+
+    def parse_tfevent(tfevent):
+        return dict(
+            wall_time=tfevent.wall_time,
+            name=tfevent.summary.value[0].tag,
+            step=tfevent.step,
+            value=float(tfevent.summary.value[0].simple_value),
+        )
+
+    columns_order = ["wall_time", "name", "step", "value"]
+
+    out = []
+    for root, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            if "events.out.tfevents" not in filename:
+                continue
+            file_full_path = os.path.join(root, filename)
+            out.append(convert_tfevent(file_full_path))
+    # Concatenate (and sort) all partial individual dataframes
+    all_df = pd.concat(out)[columns_order]
+    if sort_by is not None:
+        all_df = all_df.sort_values(sort_by)
+
+    dict_out = dict()
+    for name, group in all_df.groupby("name"):
+        dict_out[name] = group.reset_index(drop=True)
+
+    return dict_out
+
+
+def all_df(path):
+    out = dict()
+    for folder in os.listdir(path):
+        p = os.path.join(path, folder)
+        out[folder] = convert_tb_data(p)
+    return out
+
+
+def do_it(path, isString=False):
+    to_get = [
+        "eval/1_precision",
+        "eval/1_recall",
+        "eval/1_f1-score",
+        "eval/2_precision",
+        "eval/2_recall",
+        "eval/2_f1-score",
+        "eval/weighted avg_f1-score",
+    ]
+    if isString:
+        to_get = [
+            "test/B-AC_precision",
+            "test/B-AC_recall",
+            "test/B-AC_f1-score",
+            "test/B-LF_precision",
+            "test/B-LF_recall",
+            "test/B-LF_f1-score",
+            "test/weighted avg_f1-score",
+        ]
+    all_dfs = all_df(path)
+    o = []
+    for key, value in all_dfs.items():
+        add_to_o = []
+        add_to_o.append(key)
+        vs = []
+        for k in to_get:
+            add_to_o.append(round(value[k].tail(1).value.values[0], 3))
+        o.append(add_to_o)
+    out = deepcopy(o)
+    for i in range(len(o)):
+        for j in range(len(o[i])):
+            if isinstance(o[i][j], str):
+                print(o[i][j], end=" ")
+            else:
+                to_compare_to = [o[k][j] for k in range(len(o))]
+                if o[i][j] == max(to_compare_to):
+                    out[i][j] = (
+                        "\\"
+                        + "textbf{"
+                        + str(out[i][j])
+                        + "0" * (5 - len(str(out[i][j])))
+                        + "}"
+                    )
+                else:
+                    out[i][j] = str(out[i][j]) + "0" * (5 - len(str(out[i][j])))
+                print("&", end=" ")
+                print(out[i][j], end=" ")
+        print("\\\\")
+
+
+def from_tensorboard(path, isString=False):
+    to_get = [
+        "eval/1_precision",
+        "eval/1_recall",
+        "eval/1_f1-score",
+        "eval/2_precision",
+        "eval/2_recall",
+        "eval/2_f1-score",
+        "eval/weighted avg_f1-score",
+    ]
+    if isString:
+        to_get = [
+            "test/B-AC_precision",
+            "test/B-AC_recall",
+            "test/B-AC_f1-score",
+            "test/B-LF_precision",
+            "test/B-LF_recall",
+            "test/B-LF_f1-score",
+            "test/weighted avg_f1-score",
+        ]
+    all_dfs = all_df(path)
+    o = []
+    for key, value in all_dfs.items():
+        add_to_o = []
+        add_to_o.append(key)
+        vs = []
+        for k in to_get:
+            add_to_o.append(round(value[k].tail(1).value.values[0], 3))
+        o.append(add_to_o)
+    out = deepcopy(o)
+    df = pd.DataFrame(
+        out,
+        columns=[
+            "Model",
+            "Abb. Precision",
+            "Abb. Recall",
+            "Abb. F1-score",
+            "LF Precision",
+            "LF Recall",
+            "LF F1-score",
+            "Weighted Avg F1-score",
+        ],
+    )
+
+    plt.figure(figsize=(6, 4))
+    # plot B-AC through epochs
+    for key, value in all_dfs.items():
+        if isString:
+            plt.plot(value["test/B-AC_f1-score"]["value"], label=key)
+        else:
+            plt.plot(value["eval/1_f1-score"]["value"], label=key)
+    plt.title("Abbreviation F1-score")
+    plt.xlabel("Epoch")
+    plt.ylabel("F1-score")
+    plt.legend()
+    plt.show()
+
+    return df
