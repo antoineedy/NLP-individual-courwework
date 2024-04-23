@@ -7,6 +7,12 @@ import torch
 from torchtext.data import Field, Dataset, Example, BucketIterator
 import gensim
 
+from transformers import AutoTokenizer
+from transformers import AutoModelForTokenClassification, TrainingArguments, Trainer
+from transformers import DataCollatorForTokenClassification
+
+from datasets import load_dataset, load_metric
+
 import torch.optim as optim
 from sklearn.metrics import precision_recall_fscore_support, classification_report
 from seqeval.metrics import f1_score as seqeval_f1_score
@@ -24,9 +30,11 @@ import transformers
 
 from colorama import Back, Style
 
-from warnings import filterwarnings
+# ignore every warning
+import warnings
 
-filterwarnings("ignore")
+warnings.filterwarnings("ignore")
+
 
 TEXT2ID = {
     "B-O": 0,
@@ -140,16 +148,21 @@ def load_embeddings(emb, text_field):
 
         EMBEDDING_PATH = "/Users/antoineedy/Documents/MScAI/Semester2/NLP/Coursework/code/data/cc.en.300.vec"
 
-        embeddings = load_embeddings1(EMBEDDING_PATH)
-        embedding_matrix = initialize_embeddings(embeddings, text_field.vocab)
+        # embeddings = load_embeddings1(EMBEDDING_PATH)
+        # embedding_matrix = initialize_embeddings(embeddings, text_field.vocab)
+        # embedding_matrix = torch.from_numpy(embedding_matrix)
+        # np.save("embedding_matrix_fasttext.npy", embedding_matrix)
+        embedding_matrix = np.load("data/embedding_matrix_fasttext.npy")
         embedding_matrix = torch.from_numpy(embedding_matrix)
 
     elif emb == "glove":
 
-        EMBEDDING_PATH = "data/glove.6B.300d.txt"
+        # EMBEDDING_PATH = "data/glove.6B.300d.txt"
 
-        embeddings = load_embeddings1(EMBEDDING_PATH)
-        embedding_matrix = initialize_embeddings(embeddings, text_field.vocab)
+        # embeddings = load_embeddings1(EMBEDDING_PATH)
+        # embedding_matrix = initialize_embeddings(embeddings, text_field.vocab)
+        # embedding_matrix = torch.from_numpy(embedding_matrix)
+        embedding_matrix = np.load("data/glove_embeddings.npy")
         embedding_matrix = torch.from_numpy(embedding_matrix)
 
     elif emb == "word2vec":
@@ -417,7 +430,7 @@ def test(model, test_iter, batch_size, labels, target_names, NUM_CLASSES):
 
         predictions += predicted_labels
         correct += correct_labels
-    print(labels, target_names)
+    # print(labels, target_names)
     print(
         classification_report(
             correct, predictions, labels=labels, target_names=target_names
@@ -428,7 +441,7 @@ def test(model, test_iter, batch_size, labels, target_names, NUM_CLASSES):
 
 def results(output_path, label_field, test_iter, BATCH_SIZE):
     tagger = torch.load(output_path)
-    print(tagger.eval())
+    # print(tagger.eval())
 
     labels = label_field.vocab.itos[2:]
     labels = sorted(labels, key=lambda x: x.split("-")[-1])
@@ -468,6 +481,239 @@ def results(output_path, label_field, test_iter, BATCH_SIZE):
     )
     plt.title("Confusion Matrix")
     plt.ylabel("Actual")
+    plt.xlabel("Predicted")
+    plt.show()
+
+
+### TRANSFORMER MODEL HERE
+
+
+def initiate_transformer_data(datasets, model_checkpoint):
+    # model_checkpoint = "antoineedy/stanford-deidentifier-base-finetuned-ner"
+    batch_size = 16
+    TEXT2ID = {
+        "B-O": 0,
+        "B-AC": 1,
+        "B-LF": 2,
+        "I-LF": 3,
+    }
+
+    # map the ner_tags to integers
+    datasets = datasets.map(
+        lambda x: {"ner_tags": [TEXT2ID[tag] for tag in x["ner_tags"]]}
+    )
+    # label_list = datasets["train"].features[f"{task}_tags"]
+    label_list = list(set(datasets["train"]["ner_tags"][0]))
+
+    tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, add_prefix_space=True)
+    label_all_tokens = True
+
+    def tokenize_and_align_labels(examples):
+        tokenized_inputs = tokenizer(
+            examples["tokens"], truncation=True, is_split_into_words=True
+        )
+
+        labels = []
+        for i, label in enumerate(examples[f"ner_tags"]):
+            word_ids = tokenized_inputs.word_ids(batch_index=i)
+            previous_word_idx = None
+            label_ids = []
+            for word_idx in word_ids:
+                # Special tokens have a word id that is None. We set the label to -100 so they are automatically
+                # ignored in the loss function.
+                if word_idx is None:
+                    label_ids.append(-100)
+                # We set the label for the first token of each word.
+                elif word_idx != previous_word_idx:
+                    label_ids.append(label[word_idx])
+                # For the other tokens in a word, we set the label to either the current label or -100, depending on
+                # the label_all_tokens flag.
+                else:
+                    label_ids.append(label[word_idx] if label_all_tokens else -100)
+                previous_word_idx = word_idx
+
+            labels.append(label_ids)
+
+        tokenized_inputs["labels"] = labels
+        return tokenized_inputs
+
+    tokenized_datasets = datasets.map(tokenize_and_align_labels, batched=True)
+    data_collator = DataCollatorForTokenClassification(tokenizer)
+
+    return (
+        tokenizer,
+        data_collator,
+        tokenized_datasets,
+        model_checkpoint,
+        label_list,
+        batch_size,
+    )
+
+
+def initiate_training(
+    data_collator,
+    tokenized_datasets,
+    model_checkpoint,
+    label_list,
+    batch_size,
+    datasets,
+    tokenizer,
+):
+    model = AutoModelForTokenClassification.from_pretrained(
+        model_checkpoint, num_labels=len(label_list), ignore_mismatched_sizes=True
+    )
+    model_name = model_checkpoint.split("/")[-1]
+
+    args = TrainingArguments(
+        f"{model_name}-finetuned-ner",
+        evaluation_strategy="epoch",
+        learning_rate=2e-5,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        num_train_epochs=60,
+        weight_decay=0.01,
+        push_to_hub=True,
+    )
+
+    metric = load_metric("seqeval")
+    example = datasets["train"][0]
+    tokenized_input = tokenizer(example["tokens"], is_split_into_words=True)
+    tokens = tokenizer.convert_ids_to_tokens(tokenized_input["input_ids"])
+
+    def compute_metrics(p):
+        predictions, labels = p
+        predictions = np.argmax(predictions, axis=2)
+
+        # Remove ignored index (special tokens)
+        true_predictions = [
+            [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions, labels)
+        ]
+        true_labels = [
+            [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions, labels)
+        ]
+
+        results = metric.compute(predictions=true_predictions, references=true_labels)
+        return {
+            "precision": results["overall_precision"],
+            "recall": results["overall_recall"],
+            "f1": results["overall_f1"],
+            "accuracy": results["overall_accuracy"],
+        }
+
+    def compute_metrics(p):
+        predictions, labels = p
+        predictions = np.argmax(predictions, axis=2)
+
+        # Remove ignored index (special tokens)
+        true_predictions = [
+            [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions, labels)
+        ]
+        true_labels = [
+            [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions, labels)
+        ]
+
+        tp = []
+        for l in true_predictions:
+            tp += l
+        tl = []
+        for l in true_labels:
+            tl += l
+
+        cr = classification_report(tl, tp, output_dict=True)
+        out = {}
+        for key in cr.keys():
+            if key == "accuracy":
+                out[key] = cr[key]
+            else:
+                for new_k in ["precision", "recall", "f1-score"]:
+                    out[key + "_" + new_k] = cr[key][new_k]
+        return out
+
+    class CustomTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False):
+            labels = inputs.get("labels")
+            # forward pass
+            outputs = model(**inputs)
+            logits = outputs.get("logits")
+            # compute custom loss
+            # w1 = [0.1, 10.0, 10.0, 10.0]
+            # w2 = [22.5520,  1.5978,  1.0000,  2.2100]
+            w3 = [0.0443, 0.6259, 1.0000, 0.4525]
+            loss_fct = nn.CrossEntropyLoss(weight=torch.tensor(w3).to(logits.device))
+            loss = loss_fct(
+                logits.view(-1, self.model.config.num_labels), labels.view(-1)
+            )
+            return (loss, outputs) if return_outputs else loss
+
+    trainer = CustomTrainer(
+        model,
+        args,
+        train_dataset=tokenized_datasets["train"],
+        eval_dataset=tokenized_datasets["validation"],
+        data_collator=data_collator,
+        tokenizer=tokenizer,
+        compute_metrics=compute_metrics,
+    )
+
+    # trainer.train()
+    # trainer.evaluate()
+
+    return trainer, model, tokenized_datasets, metric
+
+
+def evaluate_transformer(tokenized_datasets, trainer, label_list, metric):
+    predictions, labels, _ = trainer.predict(tokenized_datasets["validation"])
+    predictions = np.argmax(predictions, axis=2)
+
+    # Remove ignored index (special tokens)
+    true_predictions = [
+        [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(predictions, labels)
+    ]
+    true_labels = [
+        [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(predictions, labels)
+    ]
+
+    results = metric.compute(predictions=true_predictions, references=true_labels)
+    # print(results)
+    labels = []
+    for l in true_labels:
+        labels += l
+    pred = []
+    for l in true_predictions:
+        pred += l
+
+    ID2TEXT = {0: "B-O", 1: "B-AC", 2: "B-LF", 3: "I-LF"}
+    TEXT2ID = {v: k for k, v in ID2TEXT.items()}
+    labels = [ID2TEXT[k] for k in labels]
+    pred = [ID2TEXT[k] for k in pred]
+
+    alabels = ["B-O", "B-AC", "B-LF"]
+    nlabels = ["O", "Abb.", "Long-forms"]
+
+    c = labels
+    p = pred
+
+    cm = confusion_matrix(c, p, normalize="true", labels=alabels)
+
+    plt.figure(dpi=600)
+    plt.figure(figsize=(4, 4))
+
+    sns.heatmap(
+        cm,
+        annot=True,
+        cmap="Blues",
+        xticklabels=nlabels,
+        yticklabels=nlabels,
+        fmt=".2f",
+    )
+    # make labels bold
+    plt.ylabel("Actual", fontweight="bold")
     plt.xlabel("Predicted")
     plt.show()
 
@@ -655,8 +901,9 @@ def convert_tb_data(root_dir, sort_by=None):
 def all_df(path):
     out = dict()
     for folder in os.listdir(path):
-        p = os.path.join(path, folder)
-        out[folder] = convert_tb_data(p)
+        if folder[0] != ".":
+            p = os.path.join(path, folder)
+            out[folder] = convert_tb_data(p)
     return out
 
 
