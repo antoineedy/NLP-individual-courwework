@@ -254,9 +254,9 @@ def train(
         weight=class_weights, ignore_index=1
     )  # we mask the <pad> labels
     # Hinge loss
-    # criterion = nn.MultiMarginLoss(margin=1.0, weight=class_weights, reduction='mean')
+    criterion = nn.MultiMarginLoss(margin=1.0, weight=class_weights, reduction="mean")
 
-    optimizer = optim.Adam(model.parameters())
+    # optimizer = optim.Adam(model.parameters())
 
     # SGD
     # lr = 0.1
@@ -407,7 +407,7 @@ def train(
     return train_f_score_history, dev_f_score_history
 
 
-def test(model, test_iter, batch_size, labels, target_names, NUM_CLASSES):
+def test(model, test_iter, batch_size, labels, target_names, NUM_CLASSES, toprint=True):
 
     total_loss = 0
     predictions, correct = [], []
@@ -431,21 +431,30 @@ def test(model, test_iter, batch_size, labels, target_names, NUM_CLASSES):
         predictions += predicted_labels
         correct += correct_labels
     # print(labels, target_names)
-    print(
-        classification_report(
-            correct, predictions, labels=labels, target_names=target_names
+    if toprint:
+        print(
+            classification_report(
+                correct, predictions, labels=labels, target_names=target_names
+            )
         )
-    )
     return correct, predictions
 
 
-def results(output_path, label_field, test_iter, BATCH_SIZE):
+TOKENIZERS_PARALLELISM = True
+
+
+def results(output_path, label_field, test_iter, BATCH_SIZE, toreturn=False):
     tagger = torch.load(output_path)
     # print(tagger.eval())
 
     labels = label_field.vocab.itos[2:]
     labels = sorted(labels, key=lambda x: x.split("-")[-1])
     label_idxs = [label_field.vocab.stoi[l] for l in labels]
+
+    if toreturn:
+        toprint = False
+    else:
+        toprint = True
 
     c, p = test(
         tagger,
@@ -454,6 +463,7 @@ def results(output_path, label_field, test_iter, BATCH_SIZE):
         labels=label_idxs,
         target_names=labels,
         NUM_CLASSES=len(label_field.vocab),
+        toprint=toprint,
     )
     labels, target_names = [4, 3, 5, 2], ["B-AC", "I-LF", "B-LF", "B-O"]
 
@@ -463,6 +473,13 @@ def results(output_path, label_field, test_iter, BATCH_SIZE):
 
     c = [ID2TEXT[i] for i in c]
     p = [ID2TEXT[i] for i in p]
+
+    words = []
+    for batch in test_iter:
+        words += batch.text[0].tolist()
+
+    if toreturn:
+        return c, p, words
 
     labels = ["B-O", "B-AC", "B-LF"]
     nlabels = ["O", "Abb.", "Long-forms"]
@@ -699,6 +716,8 @@ def evaluate_transformer(tokenized_datasets, trainer, label_list, metric):
     c = labels
     p = pred
 
+    print(classification_report(c, p))
+
     cm = confusion_matrix(c, p, normalize="true", labels=alabels)
 
     plt.figure(dpi=600)
@@ -723,7 +742,7 @@ def evaluate_transformer(tokenized_datasets, trainer, label_list, metric):
 import transformers
 
 
-def show_visu(datasets, model_path):
+def show_visu_transformer(datasets, model_path):
 
     TEXT2ID = {
         "B-O": 0,
@@ -783,8 +802,9 @@ def show_visu(datasets, model_path):
 
         return words, output, truth
 
-    def choose_multiple(nb=5):
+    def choose_multiple(nb=10):
         indices = torch.randint(0, len(datasets["test"]["tokens"]), (nb,))
+        indices = torch.unique(indices)
         words = []
         outputs = []
         truths = []
@@ -826,7 +846,13 @@ def show_visu(datasets, model_path):
                 out_label.append(TEXT2ID[output[i]["entity"]])
             else:
                 out_label.append(int(output[i]["entity"][-1]))
-        col = {0: Back.BLACK, 1: Back.RED, 2: Back.GREEN, 3: Back.BLUE, 4: Back.MAGENTA}
+        col = {
+            0: Style.RESET_ALL,
+            1: Back.RED,
+            2: Back.GREEN,
+            3: Back.BLUE,
+            4: Back.MAGENTA,
+        }
         out_label = out_label[1:]
         out_words = out_words[1:]
         print("Output:  ", end="")
